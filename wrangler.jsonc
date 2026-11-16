@@ -13,7 +13,7 @@
       "binding": "DB",
       "database_name": "dc-shiftz",
       // Paste the database_id that `npx wrangler d1 create dc-shiftz` prints (setup step 4).
-      "database_id": "REPLACE_WITH_YOUR_DATABASE_ID"
+      "database_id": "9acf5bbf-e224-4811-8de7-41d1b2206e28"
     }
   ],
   // Daily cleanup at 9:00 UTC (3 or 4 am in Michigan): clears chat older than 90 days and stale sessions.

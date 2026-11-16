@@ -1,0 +1,22 @@
+{
+  // DC SH!FTZ on Cloudflare's free plan: one Worker serves the app and the API.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shiftz",
+  "main": "worker.js",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dc-shiftz",
+      // Paste the database_id that `npx wrangler d1 create dc-shiftz` prints (setup step 4).
+      "database_id": "REPLACE_WITH_YOUR_DATABASE_ID"
+    }
+  ],
+  // Daily cleanup at 9:00 UTC (3 or 4 am in Michigan): clears chat older than 90 days and stale sessions.
+  "triggers": { "crons": ["0 9 * * *"] },
+  "observability": { "enabled": true }
+}

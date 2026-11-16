@@ -1,0 +1,17 @@
+{
+  "name": "dc-shiftz",
+  "version": "1.7.0",
+  "private": true,
+  "description": "DC SH!FTZ shift-cover app on Cloudflare Workers + D1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:schema": "wrangler d1 execute dc-shiftz --remote --file=schema.sql",
+    "db:schema:local": "wrangler d1 execute dc-shiftz --local --file=schema.sql",
+    "db:import": "wrangler d1 execute dc-shiftz --remote --file=migration/live-data.sql",
+    "test": "node --experimental-sqlite test/e2e.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

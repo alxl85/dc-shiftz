@@ -160,6 +160,7 @@ h3.sec{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--
 .vols .btn{grid-row:1 / span 2;grid-column:3}
 
 /* forms */
+.panel>*{min-width:0}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:14px;min-width:0}
 .fgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
 .field{display:flex;flex-direction:column;gap:5px;min-width:0}
@@ -365,7 +366,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   <header class="bar">
     <div class="wrap">
       <button class="logo brand" id="logo" type="button" aria-label="DC SH!FTZ"></button>
-      <span class="ver">v2.0.0</span>
+      <span class="ver">v2.1.1</span>
       <button class="who-btn" id="whoBtn" type="button" aria-label="My account"><span class="nm" id="whoName"></span></button>
     </div>
   </header>
@@ -408,7 +409,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
         <div class="field">
           <span class="flabel">Shift</span>
           <div class="seg">
-            <label><input type="radio" name="rType" id="rTypeM" value="morning" checked>Morning<small>8:30–3:00</small></label>
+            <label><input type="radio" name="rType" id="rTypeM" value="morning" checked>Morning<small>8:30–3:30</small></label>
             <label><input type="radio" name="rType" id="rTypeC" value="close">Close<small>3:00–9:30</small></label>
             <label><input type="radio" name="rType" id="rTypeX" value="custom">Custom<small>set hours</small></label>
           </div>
@@ -481,13 +482,16 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
         <div class="err" id="pErr"></div>
         <button class="btn primary" type="submit">Update code</button>
       </form>
-      <form class="panel" id="mailForm" novalidate style="margin-top:12px">
-        <span class="flabel">Email alerts</span>
-        <div class="field"><label for="mEmail">Email (optional)</label><input id="mEmail" type="email" maxlength="80" autocomplete="email" placeholder="you@example.com"></div>
-        <label class="check"><input type="checkbox" id="mOn"><span>Email me when a shift opens up</span></label>
-        <span class="hint">Email delivery is being set up. Saving this now means you'll be included when it's switched on.</span>
-        <button class="btn" type="submit">Save</button>
-      </form>
+      <div class="panel" id="pushPanel" style="margin-top:12px">
+        <span class="flabel">Phone notifications</span>
+        <span class="hint" id="pnStatus">Checking this phone…</span>
+        <div class="actions">
+          <button class="btn primary" type="button" id="pnBtn" hidden>Turn on notifications</button>
+          <button class="btn" type="button" id="pnTest" hidden>Send a test</button>
+        </div>
+        <label class="check" id="pnOpenBox"><input type="checkbox" id="pnOpen"><span>Tell me when any shift needs cover</span></label>
+        <span class="hint">You'll always hear when a coworker asks you to confirm a cover, when your request is decided, when a shift you offered on is given out, and when someone messages you directly.</span>
+      </div>
       <button class="btn no block" type="button" id="logoutBtn" style="margin-top:16px">Log out</button>
     </section>
 
@@ -536,12 +540,13 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
               <label id="sfRoleABox" hidden><input type="radio" name="sfRole" id="sfRoleA" value="admin">Admin<small>owner</small></label>
             </div>
           </div>
-          <div class="field">
+          <span class="hint" id="sfAllPos" hidden>Managers and admins can cover every position, so there are no positions to set.</span>
+          <div class="field" id="sfMainBox">
             <span class="flabel">Main position</span>
             <div class="seg" id="sfMain" style="grid-template-columns:repeat(2,minmax(0,1fr))"></div>
             <span class="hint">What they were hired and trained for.</span>
           </div>
-          <div class="field">
+          <div class="field" id="sfCrossBox">
             <span class="flabel">Cross-trained for</span>
             <div class="toggles" id="sfPos"></div>
             <span class="hint">They can pick up shifts for their main position, these positions, and anything those cover by default (see Settings).</span>
@@ -600,6 +605,18 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
           </div>
           <span class="hint" id="hrStatus">Downloads the report and opens a new email to HR in your mail app with the summary filled in. Attach the downloaded file, then send.</span>
         </div>
+        <div class="panel" id="payPanel" style="margin-top:12px">
+          <span class="flabel">Payroll swaps</span>
+          <span class="hint">Who actually worked each swapped shift in a pay period, with hours, for payroll.</span>
+          <div class="field"><label for="ppSel">Pay period</label><select id="ppSel"></select></div>
+          <span id="ppSum" style="font-weight:600"></span>
+          <div class="note warn" id="ppWarn" hidden style="margin-top:0"></div>
+          <div id="ppTable"></div>
+          <div class="actions">
+            <button class="btn primary" type="button" id="ppDl">Download payroll report</button>
+            <button class="btn" type="button" id="ppMail">Email it to HR</button>
+          </div>
+        </div>
         <h3 class="sec">Cover requests by weekday</h3>
         <div id="dowBars"></div>
         <h3 class="sec">Who's switching on which days</h3>
@@ -620,6 +637,15 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
           <span class="flabel">Privacy</span>
           <label class="check"><input type="checkbox" id="hideMgmt"><span>Hide the Manage tab on my screen. Tap the DC SH!FTZ logo three times to open it.</span></label>
         </div>
+        <form class="panel" id="payForm" novalidate style="margin-top:12px">
+          <span class="flabel">Pay periods</span>
+          <div class="fgrid">
+            <div class="field"><label for="payAnchor">Any pay period's first day</label><input type="date" id="payAnchor"></div>
+            <div class="field"><label for="payLen">Paid</label><select id="payLen"><option value="14">Every 2 weeks</option><option value="7">Every week</option></select></div>
+          </div>
+          <span class="hint">Used by the payroll swap report. Pick the Monday a pay period started, like Mon Nov 2.</span>
+          <button class="btn" type="submit">Save</button>
+        </form>
         <form class="panel" id="hrForm" novalidate style="margin-top:12px">
           <span class="flabel">HR contact</span>
           <div class="field"><label for="hrEmail">HR email</label><input id="hrEmail" type="email" maxlength="200" autocomplete="off" placeholder="hr@example.com"></div>
@@ -675,7 +701,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   "use strict";
   const $ = (id) => document.getElementById(id);
   const POS = ["Budtender", "Inventory", "Reception", "Online"];
-  const PRESET = { morning: { label: "Morning", start: "08:30", end: "15:00" }, close: { label: "Close", start: "15:00", end: "21:30" } };
+  const PRESET = { morning: { label: "Morning", start: "08:30", end: "15:30" }, close: { label: "Close", start: "15:00", end: "21:30" } };
   const COLS = ["staff", "settings", "requests", "volunteers", "inbox", "shift_audit_logs", "messages", "chatread"];
 
   const S = {
@@ -863,9 +889,13 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   const activeStaff = () => Object.values(S.staff).filter(s => s.active !== false);
   const mainOf = (s) => (s && (s.main || (s.positions || [])[0])) || "";
   const crossOf = (s) => (s && s.cross ? s.cross : (s && s.positions || []).slice(1)).filter(p => p !== mainOf(s));
-  const qualified = (s) => [mainOf(s), ...crossOf(s)].filter(Boolean);
+  // Managers and admins can work any position, so they never need positions set.
+  const qualified = (s) => (isMgrRole(s) ? POS.slice() : [mainOf(s), ...crossOf(s)].filter(Boolean));
+  const posChips = (s) => (isMgrRole(s) ? [el("span", { class: "chip main" }, "All positions")]
+    : [mainOf(s) ? el("span", { class: "chip main" }, mainOf(s)) : null, ...crossOf(s).map(p => el("span", { class: "chip" }, "+ " + p))]);
   function eligible(staff, position) {
     if (!staff || staff.active === false) return false;
+    if (isMgrRole(staff)) return true;
     const mine = qualified(staff);
     if (mine.includes(position)) return true;
     const fillers = (S.settings.coverMap || {})[position] || [];
@@ -967,6 +997,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   }
   async function logout() {
     if (S.test) { setMode(false); }
+    await dropPushOnLogout();
     try { if (api.token) await api.call("/api/logout", {}); } catch (e) {}
     S.view = "open"; S.conv = null;
     authLost({ userMsg: "" });
@@ -1039,7 +1070,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     if (v === "account") prepAccount();
     if (v === "alerts") markAlertsRead();
     if (v === "chat" && !chatOk()) openTerms();
-    if (v === "manage") { $("hideMgmt").checked = !!(me() && me().hideMgmt); $("testCard").hidden = !(S.owner || isMgr()) || S.test; $("hrEmail").value = S.settings.hrEmail || ""; }
+    if (v === "manage") { $("hideMgmt").checked = !!(me() && me().hideMgmt); $("testCard").hidden = !(S.owner || isMgr()) || S.test; $("hrEmail").value = S.settings.hrEmail || ""; $("payAnchor").value = payCfg().anchor; $("payLen").value = String(payCfg().days); }
     window.scrollTo(0, 0);
     render();
   }
@@ -1394,9 +1425,10 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   function prepAccount() {
     const m = me(); if (!m) return;
     $("accName").textContent = m.name;
-    $("accPos").textContent = (mainOf(m) || "") + (crossOf(m).length ? " · Cross-trained: " + crossOf(m).join(", ") : "");
-    $("mEmail").value = m.email || ""; $("mOn").checked = !!m.emailAlerts;
+    $("accPos").textContent = isMgrRole(m) ? "All positions" : (mainOf(m) || "") + (crossOf(m).length ? " · Cross-trained: " + crossOf(m).join(", ") : "");
     $("pErr").textContent = "";
+    $("pnOpen").checked = m.pushOpen !== false;
+    renderPush();
   }
   $("pinForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const err = $("pErr"); err.textContent = ""; const m = me();
@@ -1411,12 +1443,50 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       toast("Code updated.");
     } catch (x) { err.textContent = x.userMsg || "Couldn't update your code. Try again."; }
   });
-  $("mailForm").addEventListener("submit", async (e) => {
-    e.preventDefault(); const email = $("mEmail").value.trim();
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("That email doesn't look right.");
-    try { await D("staff", S.meId).update({ email, emailAlerts: $("mOn").checked && !!email }); toast("Saved."); }
-    catch (x) { toast("Couldn't save. Try again."); }
+  // ---------- phone notifications ----------
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isStandalone = () => (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+  const pushReady = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const keyBytes = (k) => { const s = atob(k.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((k.length + 3) % 4)); return Uint8Array.from(s, c => c.charCodeAt(0)); };
+  async function currentSub() { if (!pushReady()) return null; const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
+  async function renderPush() {
+    const st = $("pnStatus"), btn = $("pnBtn"), test = $("pnTest");
+    btn.hidden = true; test.hidden = true; $("pnOpenBox").hidden = S.test;
+    if (S.test) { st.textContent = "Notifications aren't sent in test mode."; return; }
+    if (!pushReady()) {
+      st.textContent = isIOS && !isStandalone()
+        ? "On iPhone, add DC SH!FTZ to your Home Screen first: tap Share → Add to Home Screen, then open it from the new icon and come back here."
+        : "This browser can't receive notifications. Try Chrome on Android, or the Home Screen app on iPhone.";
+      return;
+    }
+    if (Notification.permission === "denied") { st.textContent = "Notifications are blocked for DC SH!FTZ. Allow them in your phone's settings for this app or site, then come back."; return; }
+    let sub = null; try { sub = await currentSub(); } catch (e) {}
+    if (sub) { st.textContent = "On for this phone."; btn.textContent = "Turn off on this phone"; btn.className = "btn"; btn.hidden = false; test.hidden = false; }
+    else { st.textContent = "Off for this phone."; btn.textContent = "Turn on notifications"; btn.className = "btn primary"; btn.hidden = false; }
+  }
+  $("pnBtn").addEventListener("click", busy($("pnBtn"), async () => {
+    const sub = await currentSub();
+    if (sub) {
+      try { await api.call("/api/push/unsubscribe", { endpoint: sub.endpoint }); } catch (e) {}
+      await sub.unsubscribe(); toast("Notifications are off on this phone.");
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { await renderPush(); throw userErr("Notifications weren't allowed, so nothing changed."); }
+      const { key } = await api.call("/api/push/key");
+      const reg = await navigator.serviceWorker.ready;
+      const fresh = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+      await api.call("/api/push/subscribe", fresh.toJSON());
+      toast("Notifications are on. Tap Send a test to check.");
+    }
+    await renderPush();
+  }));
+  $("pnTest").addEventListener("click", busy($("pnTest"), async () => { await api.call("/api/push/test", {}); toast("Test sent. It should arrive in a few seconds."); }));
+  $("pnOpen").addEventListener("change", async () => {
+    try { await D("staff", S.meId).update({ pushOpen: $("pnOpen").checked }); toast($("pnOpen").checked ? "You'll hear about every shift that needs cover." : "You won't hear about new open shifts."); }
+    catch (e) { toast("Couldn't save that. Try again."); }
   });
+  // a shared phone or workstation shouldn't keep getting the last person's notifications
+  async function dropPushOnLogout() { try { const sub = await currentSub(); if (sub) { try { await api.call("/api/push/unsubscribe", { endpoint: sub.endpoint }); } catch (e) {} await sub.unsubscribe(); } } catch (e) {} }
   $("logoutBtn").addEventListener("click", logout);
 
   // ---------- MANAGE: approvals ----------
@@ -1487,7 +1557,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const sameDay = S.requests.filter(x => x.id !== r.id && x.date === r.date && ((x.status === "approved" && x.assignedTo === staffId) || (x.requesterId === staffId && ["open", "confirming", "review", "approved"].includes(x.status))));
     const lastCov = S.requests.filter(x => x.assignedTo === staffId && x.outcome === "worked").sort((a, b) => startOf(b) - startOf(a))[0];
     const rows = [
-      ["Positions", el("span", { class: "chips" }, mainOf(s) ? el("span", { class: "chip main" }, mainOf(s)) : null, crossOf(s).map(p => el("span", { class: "chip" }, "+ " + p)),
+      ["Positions", el("span", { class: "chips" }, posChips(s),
         eligible(s, r.position) ? null : el("span", { class: "badge b-open" }, "Not trained for " + r.position))],
       ["With team", tenure(s)],
       ["Covers", rec.covered + " worked" + (rec.noShows ? " · " + rec.noShows + " no-show" + (rec.noShows > 1 ? "s" : "") : " · no no-shows") + (rec.excused ? " · " + rec.excused + " excused" : "") + (lastCov ? " · last " + MON[parseDate(lastCov.date).getMonth()] + " " + parseDate(lastCov.date).getDate() : ""), rec.noShows ? "warn" : ""],
@@ -1594,6 +1664,11 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       ? el("label", { class: "locked" }, el("input", { type: "checkbox", id: "sfPos-" + p, checked: true, disabled: true }), p + " (main)")
       : el("label", null, el("input", { type: "checkbox", value: p, id: "sfPos-" + p, checked: cross.includes(p) }), p)));
   }
+  function syncRoleFields() {
+    const mgr = $("sfRoleM").checked || $("sfRoleA").checked;
+    $("sfMainBox").hidden = mgr; $("sfCrossBox").hidden = mgr; $("sfAllPos").hidden = !mgr;
+  }
+  ["sfRoleE", "sfRoleL", "sfRoleM", "sfRoleA"].forEach(id => $(id).addEventListener("change", syncRoleFields));
   function hidePanels() { $("staffForm").hidden = true; $("codeCard").hidden = true; $("excuseForm").hidden = true; }
   async function openStaffForm(id) {
     const s = id ? S.staff[id] : null;
@@ -1605,6 +1680,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     $("sfName").value = s ? s.name : "";
     (s && s.role === "admin" ? $("sfRoleA") : s && s.role === "management" ? $("sfRoleM") : s && s.role === "lead" ? $("sfRoleL") : $("sfRoleE")).checked = true;
     posToggles(s ? (mainOf(s) || "Budtender") : "Budtender", s ? crossOf(s) : []);
+    syncRoleFields();
     $("sfCodeBox").hidden = !!s;
     $("sfSave").textContent = s ? "Save changes" : "Create employee";
     $("sfErr").textContent = "";
@@ -1647,10 +1723,11 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   $("staffForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const err = $("sfErr"); err.textContent = "";
     const name = $("sfName").value.trim(), role = $("sfRoleA").checked && isAdmin() ? "admin" : $("sfRoleM").checked ? "management" : $("sfRoleL").checked ? "lead" : "employee";
+    const mgrRole = role === "management" || role === "admin";
     const main = (POS.find(p => $("sfMain-" + p).checked)) || "Budtender";
-    const cross = POS.filter(p => p !== main && $("sfPos-" + p).checked);
+    const cross = mgrRole ? POS.filter(p => p !== main) : POS.filter(p => p !== main && $("sfPos-" + p).checked);
     const positions = [main, ...cross];
-    const posText = main + (cross.length ? ", cross-trained: " + cross.join(", ") : "");
+    const posText = mgrRole ? "all positions" : main + (cross.length ? ", cross-trained: " + cross.join(", ") : "");
     if (!name) return (err.textContent = "Add a name or nickname.");
     const clash = activeStaff().find(s => s.name.toLowerCase() === name.toLowerCase() && s.id !== S.editingId);
     if (clash) return (err.textContent = "Someone is already called " + clash.name + ". Add an initial so people can tell them apart.");
@@ -1712,7 +1789,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
         el("span", { class: "actions" },
           el("button", { class: "btn sm", type: "button", onclick: () => openStaffForm(s.id) }, "Edit"),
           el("button", { class: "btn sm ghost", type: "button", onclick: () => { S.personId = null; hidePanels(); render(); } }, "Close"))),
-      el("div", { class: "chips" }, mainOf(s) ? el("span", { class: "chip main" }, mainOf(s)) : null, crossOf(s).map(p => el("span", { class: "chip" }, "+ " + p))),
+      el("div", { class: "chips" }, posChips(s)),
       el("div", { class: "stats4" },
         el("div", { class: "stat" }, el("div", { class: "v" }, rec.asked), el("div", { class: "k" }, "Asked")),
         el("div", { class: "stat" }, el("div", { class: "v" }, rec.given), el("div", { class: "k" }, "Given away")),
@@ -1746,8 +1823,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
           el("span", { class: "sn" }, s.name, s.id === S.meId ? " (you)" : ""),
           el("div", { class: "chips" },
             s.role === "admin" ? el("span", { class: "badge b-ok" }, "Admin") : s.role === "management" ? el("span", { class: "badge b-wait" }, "Mgmt") : s.role === "lead" ? el("span", { class: "badge b-open" }, "Lead") : null,
-            mainOf(s) ? el("span", { class: "chip main" }, mainOf(s)) : null,
-            crossOf(s).map(p => el("span", { class: "chip" }, "+ " + p)),
+            posChips(s),
             s.pinTemp && !S.test ? el("span", { class: "badge b-open" }, "Code not set") : null,
             rec.noShows ? el("span", { class: "badge b-bad" }, rec.noShows + " no-show" + (rec.noShows > 1 ? "s" : "")) : null,
             s.active === false ? el("span", { class: "badge b-gone" }, "Inactive") : null)),
@@ -1758,6 +1834,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   // ---------- MANAGE: reports ----------
   ["rng30", "rng90", "rngAll"].forEach(id => $(id).addEventListener("change", render));
   function renderReports() {
+    renderPayroll();
     if (!$("hrTo").dataset.touched && document.activeElement !== $("hrTo")) $("hrTo").value = S.settings.hrEmail || "";
     const days = $("rng30").checked ? 30 : $("rng90").checked ? 90 : null;
     const since = days ? addDays(-days) : null;
@@ -1875,7 +1952,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const people = Object.values(S.staff).sort((a, b) => a.name.localeCompare(b.name));
     const summary = people.map(s => {
       const x = record(s.id, since), k = askStats(s.id, since), o = offerStats(s.id, since);
-      return { "Name": s.name, "Status": s.active === false ? "Former" : "Active", "Role": roleLabel(s.role), "Main position": mainOf(s), "Cross-trained": crossOf(s).join(", "),
+      return { "Name": s.name, "Status": s.active === false ? "Former" : "Active", "Role": roleLabel(s.role), "Main position": isMgrRole(s) ? "All positions" : mainOf(s), "Cross-trained": isMgrRole(s) ? "" : crossOf(s).join(", "),
         "Asked off": x.asked, "Given away": x.given, "Avg notice (h)": hrs(k.avg), "Under 24 h": k.short, "Call-offs (under 2 h)": k.callOffs,
         "Offers made": o.count, "Avg response (h)": hrs(o.avg), "Offers picked": o.picked, "Shifts covered": x.covered, "No-shows": x.noShows, "Excused no-shows": x.excused };
     }).filter(r => r["Asked off"] || r["Offers made"] || r["Shifts covered"] || r["No-shows"] || r["Excused no-shows"]);
@@ -1954,6 +2031,108 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       const ref = D("settings", "main");
       if (S.settingsExists) await ref.update({ hrEmail: v }); else { await ref.set({ coverMap: S.settings.coverMap || {}, hrEmail: v }); S.settingsExists = true; }
       $("hrTo").dataset.touched = ""; toast("HR email saved.");
+    } catch (x) { toast("Couldn't save. Try again."); }
+  });
+
+  // ---------- PAYROLL SWAPS (who actually worked each swapped shift, by pay period) ----------
+  // Default pay schedule: every 2 weeks, Monday to Sunday, with Mon Nov 2, 2026 as a known start.
+  const PAY_DEFAULT = { anchor: "2026-11-02", days: 14 };
+  const dayNum = (ds) => { const [y, m, d] = ds.split("-").map(Number); return Math.round(Date.UTC(y, m - 1, d) / 864e5); };
+  const numDay = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
+  const payCfg = () => ({ anchor: S.settings.payAnchor || PAY_DEFAULT.anchor, days: Number(S.settings.payDays) || PAY_DEFAULT.days });
+  function periodOf(ds) { const { anchor, days } = payCfg(), a = dayNum(anchor); const s = a + Math.floor((dayNum(ds) - a) / days) * days; return { start: numDay(s), end: numDay(s + days - 1) }; }
+  const shortDay = (ds) => { const d = parseDate(ds); return DOW[d.getDay()] + " " + MON[d.getMonth()] + " " + d.getDate(); };
+  const periodLabel = (p) => shortDay(p.start) + " – " + shortDay(p.end);
+  function shiftHours(r) { const [sh, sm] = r.start.split(":").map(Number), [eh, em] = r.end.split(":").map(Number); let m = (eh * 60 + em) - (sh * 60 + sm); if (m <= 0) m += 1440; return Math.round(m / 6) / 10; }
+  function payPeriods() {
+    const cur = periodOf(todayStr()), { days } = payCfg(), out = [];
+    for (let i = 1; i >= -12; i--) { const s = dayNum(cur.start) + i * days; out.push({ start: numDay(s), end: numDay(s + days - 1), rel: i }); }
+    return out;
+  }
+  function payrollData(p) {
+    const swaps = S.requests.filter(r => r.status === "approved" && r.assignedTo && r.date >= p.start && r.date <= p.end)
+      .sort((a, b) => startOf(a) - startOf(b));
+    const per = {};
+    const row = (id) => (per[id] = per[id] || { gaveN: 0, gaveH: 0, workN: 0, workH: 0 });
+    let noShows = 0, unchecked = 0, hours = 0;
+    const lines = swaps.map(r => {
+      const h = shiftHours(r), ended = endOf(r).getTime() < Date.now();
+      const status = r.outcome === "worked" ? "Worked" : r.outcome === "noshow" ? (r.excused ? "No-show (excused)" : "No-show") : ended ? "Not confirmed yet" : "Upcoming";
+      row(r.requesterId).gaveN++; row(r.requesterId).gaveH += h;
+      if (r.outcome !== "noshow") { row(r.assignedTo).workN++; row(r.assignedTo).workH += h; hours += h; }
+      if (r.outcome === "noshow") noShows++; else if (status === "Not confirmed yet") unchecked++;
+      return { "Date": r.date, "Day": DOW[parseDate(r.date).getDay()], "Start": t12(r.start), "End": t12(r.end), "Hours": h, "Position": r.position,
+        "Scheduled": nameOf(r.requesterId), "Worked by": r.outcome === "noshow" ? "Nobody (" + nameOf(r.assignedTo) + " no-show)" : nameOf(r.assignedTo),
+        "Status": status, "Cross-train": eligible(S.staff[r.assignedTo], r.position) ? "" : "Yes", "Arranged by employees": r.mode === "arranged" ? "Yes" : "",
+        "Approved by": r.decidedBy ? nameOf(r.decidedBy) : "", "Approved": stamp(r.decidedAt), "Excuse": r.excused ? r.excused.reason : "" };
+    });
+    const people = Object.entries(per).map(([id, x]) => ({ "Name": nameOf(id), "Shifts given away": x.gaveN, "Hours given away": Math.round(x.gaveH * 10) / 10,
+      "Shifts worked for others": x.workN, "Hours worked for others": Math.round(x.workH * 10) / 10, "Net hours": Math.round((x.workH - x.gaveH) * 10) / 10 }))
+      .sort((a, b) => b["Net hours"] - a["Net hours"] || a.Name.localeCompare(b.Name));
+    const check = lines.filter(l => l.Status.startsWith("No-show") || l.Status === "Not confirmed yet");
+    return { p, lines, people, check, noShows, unchecked, hours: Math.round(hours * 10) / 10 };
+  }
+  const payFile = (d) => "DC-SHIFTZ-payroll-swaps_" + d.p.start + "_to_" + d.p.end + (S.test ? "_TEST" : "") + ".xlsx";
+  function payWorkbook(d) {
+    const summary = [
+      { "Item": "Pay period", "Value": periodLabel(d.p) + " (" + d.p.start + " to " + d.p.end + ")" },
+      { "Item": "Approved swaps", "Value": d.lines.length },
+      { "Item": "Hours worked by someone other than the scheduled person", "Value": d.hours },
+      { "Item": "No-shows on covered shifts", "Value": d.noShows },
+      { "Item": "Covered shifts not yet confirmed as worked", "Value": d.unchecked },
+      { "Item": "Made by", "Value": (me() ? me().name : "") + ", " + stamp(Date.now()) },
+      { "Item": "Note", "Value": "Only shifts swapped through DC SH!FTZ appear here. Check the regular schedule for everything else." }
+    ];
+    return buildXlsx([
+      { name: "Summary", rows: summary, none: "" },
+      { name: "Swaps", rows: d.lines, none: "No approved swaps in this pay period" },
+      { name: "By person", rows: d.people, none: "No approved swaps in this pay period" },
+      { name: "Check these", rows: d.check, none: "Nothing to check: every covered shift was confirmed as worked" }
+    ], "DC SH!FTZ payroll swaps, " + periodLabel(d.p));
+  }
+  function renderPayroll() {
+    const sel = $("ppSel"), prev = sel.value, list = payPeriods();
+    fillSelect(sel, list.map(p => [p.start, (p.rel === 0 ? "Current: " : p.rel === -1 ? "Last: " : p.rel === 1 ? "Next: " : "") + periodLabel(p)]), false);
+    sel.value = list.some(p => p.start === prev) ? prev : (list.find(p => p.rel === -1) || list[0]).start;
+    const p = list.find(x => x.start === sel.value), d = payrollData(p);
+    $("ppSum").textContent = d.lines.length
+      ? d.lines.length + " approved swap" + (d.lines.length === 1 ? "" : "s") + " · " + d.hours + " hours worked by someone else" + (d.noShows ? " · " + d.noShows + " no-show" + (d.noShows === 1 ? "" : "s") : "") + (d.unchecked ? " · " + d.unchecked + " not confirmed yet" : "")
+      : "No approved swaps in this pay period.";
+    $("ppWarn").hidden = !d.unchecked; $("ppWarn").textContent = d.unchecked ? "Confirm worked or no-show on Approve → Confirm before sending, so payroll gets final numbers." : "";
+    $("ppTable").replaceChildren(d.people.length ? el("div", { class: "tablewrap" }, el("table", { class: "grid" },
+      el("thead", null, el("tr", null, ["Name", "Gave", "Worked", "Net"].map(h => el("th", null, h)))),
+      el("tbody", null, d.people.map(x => el("tr", null, el("td", null, x.Name), el("td", null, x["Hours given away"] + " h"), el("td", null, x["Hours worked for others"] + " h"),
+        el("td", { class: x["Net hours"] < 0 ? "bad" : "" }, (x["Net hours"] > 0 ? "+" : "") + x["Net hours"] + " h")))))) : "");
+  }
+  $("ppSel").addEventListener("change", renderPayroll);
+  const ppPick = () => { const p = payPeriods().find(x => x.start === $("ppSel").value); return payrollData(p); };
+  $("ppDl").addEventListener("click", busy($("ppDl"), async () => {
+    const d = ppPick(); saveFile(payFile(d), payWorkbook(d), XLSX_TYPE);
+    await audit("report_downloaded", null, me().name + " downloaded payroll swaps for " + periodLabel(d.p));
+    toast("Payroll report downloaded.");
+  }));
+  $("ppMail").addEventListener("click", busy($("ppMail"), async () => {
+    const to = (S.settings.hrEmail || "").split(/[,;\s]+/).filter(Boolean);
+    if (!to.length) { toast(isMgr() ? "Add HR's email in Settings first." : "Ask a manager to add HR's email in Settings."); return; }
+    const d = ppPick(); saveFile(payFile(d), payWorkbook(d), XLSX_TYPE);
+    const body = "Payroll shift swaps for " + periodLabel(d.p) + (S.test ? " (TEST DATA)" : "") + ".\n\nApproved swaps: " + d.lines.length +
+      "\nHours worked by someone other than the scheduled person: " + d.hours + "\n\n" +
+      (d.people.length ? d.people.map(x => x.Name + ": gave away " + x["Hours given away"] + " h, worked " + x["Hours worked for others"] + " h for others, net " + (x["Net hours"] > 0 ? "+" : "") + x["Net hours"] + " h").join("\n") + "\n\n" : "") +
+      (d.noShows ? "No-shows on covered shifts: " + d.noShows + "\n" : "") + (d.unchecked ? "Not yet confirmed as worked: " + d.unchecked + "\n" : "") +
+      "\nThe Excel file (" + payFile(d) + ") has every swap, a per-person summary and anything to check.\n\n" + (me() ? me().name : "");
+    await audit("report_emailed", null, me().name + " started an email of payroll swaps for " + periodLabel(d.p) + " to " + to.join(", "));
+    toast("Report downloaded. Attach it to the email before sending.");
+    location.href = "mailto:" + to.map(encodeURIComponent).join(",") + "?subject=" + encodeURIComponent("DC SH!FTZ payroll swaps: " + periodLabel(d.p) + (S.test ? " (TEST)" : "")) + "&body=" + encodeURIComponent(body);
+  }));
+  $("payForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const anchor = $("payAnchor").value, days = Number($("payLen").value);
+    if (!anchor) return toast("Pick the first day of any pay period.");
+    try {
+      const ref = D("settings", "main");
+      if (S.settingsExists) await ref.update({ payAnchor: anchor, payDays: days }); else { await ref.set({ coverMap: S.settings.coverMap || {}, payAnchor: anchor, payDays: days }); S.settingsExists = true; }
+      await audit("settings_updated", null, me().name + " set pay periods: every " + (days === 7 ? "week" : "2 weeks") + ", starting " + anchor);
+      toast("Pay periods saved.");
     } catch (x) { toast("Couldn't save. Try again."); }
   });
 
@@ -2301,6 +2480,12 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       error: (e) => { if (S.screen === "app") { $("statusNote").textContent = e.userMsg || "Lost the connection. Retrying…"; $("statusNote").dataset.net = "1"; $("statusNote").hidden = false; } }
     });
     S.test = false; loadSession();
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      navigator.serviceWorker.addEventListener("message", (e) => { if (e.data && e.data.type === "open-view" && S.screen === "app") setView(e.data.view); });
+    }
+    const startView = new URLSearchParams(location.search).get("v"); // set when a notification opens the app
+    if (["open", "mine", "chat", "alerts", "manage", "request", "account"].includes(startView)) { S.view = startView; history.replaceState(null, "", "/"); }
     if (api.token && S.meId) return startSubs();
     try { const st = await api.call("/api/status"); resetPad(); showScreen(st.needsSetup ? "setup" : "login"); }
     catch (e) { msg(e.userMsg || "Can't reach DC SH!FTZ right now."); }

@@ -1,6 +1,6 @@
 {
   "name": "dc-shiftz",
-  "version": "1.7.0",
+  "version": "2.1.1",
   "private": true,
   "description": "DC SH!FTZ shift-cover app on Cloudflare Workers + D1",
   "scripts": {

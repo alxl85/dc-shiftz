@@ -197,7 +197,7 @@ function checkWrite(me, op, col, id, cur, patch, next) {
       if (op === "delete" || op === "add" || op === "set") fail(403, "Use the staff screen to add people.", "forbidden");
       if (Object.keys(patch).some(k => PIN_KEYS.includes(k))) fail(403, "Login codes change through the code screens only.", "forbidden");
       if (!cur) fail(404, "That person doesn't exist.", "missing");
-      if (id === me.id && onlyKeys(patch, ["email", "emailAlerts", "hideMgmt", "chatTermsV", "chatTermsAt"])) return;
+      if (id === me.id && onlyKeys(patch, ["email", "emailAlerts", "hideMgmt", "chatTermsV", "chatTermsAt", "pushOpen"])) return;
       if (!mgr) fail(403, "Only managers can change staff.", "forbidden");
       if ((isAdmin(cur) || next.role === "admin") && !isAdmin(me)) fail(403, "Only an admin can change an admin account.", "forbidden");
       if (id === me.id && patch.active === false) fail(403, "You can't deactivate yourself.", "forbidden");
@@ -245,10 +245,10 @@ function checkWrite(me, op, col, id, cur, patch, next) {
   }
 }
 
-async function handleWrite(env, me, body) {
+async function handleWrite(env, me, body, ctx, origin) {
   const ops = Array.isArray(body && body.ops) ? body.ops : null;
   if (!ops || !ops.length || ops.length > MAX_OPS) fail(400, "Send between 1 and " + MAX_OPS + " changes.", "invalid");
-  const now = Date.now(), stmts = [], results = [];
+  const now = Date.now(), stmts = [], results = [], pushes = [];
   for (const o of ops) {
     const op = o.op, rawCol = String(o.col || "");
     if (!["add", "set", "update", "delete"].includes(op)) fail(400, "Unknown change type.", "invalid");
@@ -275,16 +275,125 @@ async function handleWrite(env, me, body) {
         const { results: vs } = await env.DB.prepare("SELECT data FROM docs WHERE col = 'volunteers' AND deleted = 0 AND json_extract(data, '$.reqId') = ?1").bind(id).all();
         const tell = new Set(vs.map(v => JSON.parse(v.data).staffId)); if (cur.arrangedWith) tell.add(cur.arrangedWith);
         const when = shiftWords(cur);
-        for (const to of tell) stmts.push(putStmt(env, "inbox", newId(), { to, kind: "closed", reqId: id, text: "The " + when + " shift no longer needs to be covered.", ts: now, read: false }, now));
+        for (const to of tell) {
+          const note = { to, kind: "closed", reqId: id, text: "The " + when + " shift no longer needs to be covered.", ts: now, read: false };
+          stmts.push(putStmt(env, "inbox", newId(), note, now));
+          pushes.push({ to, data: { title: "DC SH!FTZ", body: note.text, tag: "inbox-" + id, view: "mine" } });
+        }
       }
     }
     if (next && JSON.stringify(next).length > 20000) fail(400, "That record is too large.", "invalid");
+    if (!test) pushes.push(...(await pushesFor(env, me, op, col, id, cur, next)));
     stmts.push(op === "delete" ? delStmt(env, rawCol, id, now) : putStmt(env, rawCol, id, next, now));
     results.push(op === "delete" ? { col: rawCol, id, deleted: true } : { col: rawCol, id, data: test ? next : filterDoc(me, col, id, next) });
   }
   await env.DB.batch(stmts);
+  if (pushes.length) await later(ctx, deliverPushes(env, pushes, origin)); // sent after the reply, so saving never waits on phones
   return json({ results });
 }
+
+// ---------- push notifications (Web Push, RFC 8291 + VAPID RFC 8292) ----------
+// The server makes its own VAPID key pair the first time it's needed and keeps it in the kv table,
+// so there's nothing to paste into Cloudflare settings. Phones subscribe from My account.
+const MAX_PUSHES = 40; // stays under the free plan's 50 outgoing requests per call
+const b64u = {
+  enc(bytes) { let s = ""; const u = new Uint8Array(bytes); for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); },
+  dec(str) { const s = atob(String(str).replace(/-/g, "+").replace(/_/g, "/") + "===".slice((String(str).length + 3) % 4)); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+};
+const cat = (...parts) => { const n = parts.reduce((a, p) => a + p.length, 0), out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
+const utf8 = (s) => new TextEncoder().encode(s);
+async function hmac(key, data) { const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); return new Uint8Array(await crypto.subtle.sign("HMAC", k, data)); }
+
+let vapidCache = null;
+async function getVapid(env) {
+  if (vapidCache) return vapidCache;
+  let row = await env.DB.prepare("SELECT value FROM kv WHERE key = 'vapid'").first();
+  if (!row) {
+    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const jwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+    const pub = b64u.enc(await crypto.subtle.exportKey("raw", pair.publicKey));
+    await env.DB.prepare("INSERT OR IGNORE INTO kv (key, value) VALUES ('vapid', ?1)").bind(JSON.stringify({ pub, jwk: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d } })).run();
+    row = await env.DB.prepare("SELECT value FROM kv WHERE key = 'vapid'").first(); // another request may have won the race
+  }
+  const v = JSON.parse(row.value);
+  v.key = await crypto.subtle.importKey("jwk", { ...v.jwk, ext: true }, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  return (vapidCache = v);
+}
+async function vapidJwt(v, aud, subject) {
+  const head = b64u.enc(utf8(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const body = b64u.enc(utf8(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: subject })));
+  const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, v.key, utf8(head + "." + body));
+  return head + "." + body + "." + b64u.enc(sig);
+}
+// aes128gcm content encoding for one subscription (RFC 8291 section 3.4)
+async function encryptFor(sub, plain, server) {
+  const uaPublic = b64u.dec(sub.p256dh), authSecret = b64u.dec(sub.auth);
+  const uaKey = await crypto.subtle.importKey("raw", uaPublic, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: uaKey }, server.privateKey, 256));
+  const ikm = await hmac(await hmac(authSecret, ecdh), cat(utf8("WebPush: info\0"), uaPublic, server.publicRaw, new Uint8Array([1])));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const prk = await hmac(salt, ikm);
+  const cek = (await hmac(prk, cat(utf8("Content-Encoding: aes128gcm\0"), new Uint8Array([1])))).slice(0, 16);
+  const nonce = (await hmac(prk, cat(utf8("Content-Encoding: nonce\0"), new Uint8Array([1])))).slice(0, 12);
+  const key = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, cat(plain, new Uint8Array([2]))));
+  const header = new Uint8Array(21); header.set(salt, 0); new DataView(header.buffer).setUint32(16, 4096); header[20] = 65;
+  return cat(header, server.publicRaw, sealed);
+}
+// pushes: [{ to: staffId, data: { title, body, tag, view } }]
+async function deliverPushes(env, pushes, origin) {
+  if (!pushes.length) return;
+  const ids = [...new Set(pushes.map(p => p.to))];
+  const marks = ids.map((_, i) => "?" + (i + 1)).join(",");
+  const { results: subs } = await env.DB.prepare("SELECT endpoint, staff_id, p256dh, auth FROM push_subs WHERE staff_id IN (" + marks + ")").bind(...ids).all();
+  if (!subs.length) return;
+  const v = await getVapid(env);
+  const eph = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const server = { privateKey: eph.privateKey, publicRaw: new Uint8Array(await crypto.subtle.exportKey("raw", eph.publicKey)) };
+  const jwts = new Map(); let sent = 0;
+  for (const p of pushes) {
+    for (const s of subs.filter(x => x.staff_id === p.to)) {
+      if (sent >= MAX_PUSHES) return;
+      sent++;
+      try {
+        const aud = new URL(s.endpoint).origin;
+        if (!jwts.has(aud)) jwts.set(aud, await vapidJwt(v, aud, origin.startsWith("https:") ? origin : "https://" + new URL(origin).host)); // push services require an https: or mailto: contact
+        const body = await encryptFor(s, utf8(JSON.stringify(p.data)), server);
+        const r = await fetch(s.endpoint, { method: "POST", body, headers: {
+          "content-encoding": "aes128gcm", "content-type": "application/octet-stream", ttl: "86400", urgency: "high",
+          authorization: "vapid t=" + jwts.get(aud) + ", k=" + v.pub } });
+        if (r.status === 404 || r.status === 410) await env.DB.prepare("DELETE FROM push_subs WHERE endpoint = ?1").bind(s.endpoint).run(); // phone unsubscribed or reinstalled
+      } catch (e) { console.error("push failed", e); }
+    }
+  }
+}
+// Who hears about each change. Only live data; test mode never sends notifications.
+async function pushesFor(env, me, op, col, id, cur, next) {
+  const out = [];
+  if (col === "inbox" && op === "add") {
+    const view = next.kind === "confirm" ? "alerts" : "mine";
+    out.push({ to: next.to, data: { title: next.kind === "confirm" ? "Please confirm a cover" : "DC SH!FTZ", body: next.text, tag: "inbox-" + (next.reqId || id), view } });
+  }
+  if (col === "requests" && next && next.status === "open" && (op === "add" || (cur && cur.status !== "open"))) {
+    const all = await listCol(env, "staff");
+    const who = all.find(s => s.id === next.requesterId);
+    for (const s of all) if (s.active !== false && s.id !== next.requesterId && s.pushOpen !== false)
+      out.push({ to: s.id, data: { title: "Shift needs cover", body: shiftWords(next) + " · " + next.position + (who ? " · " + who.name : ""), tag: "open-" + id, view: "open" } });
+  }
+  if (col === "messages" && op === "add" && String(next.conv).startsWith("dm:")) {
+    const other = next.conv.split(":").slice(1).find(x => x !== me.id);
+    if (other) out.push({ to: other, data: { title: me.name, body: next.text.length > 140 ? next.text.slice(0, 137) + "…" : next.text, tag: "dm-" + next.conv, view: "chat" } });
+  }
+  if (col === "volunteers" && op === "set") {
+    const rq = strip(await getDoc(env, "requests", String(next.reqId)));
+    const all = await listCol(env, "staff");
+    const asker = rq && all.find(s => s.id === rq.requesterId);
+    for (const s of all) if (s.active !== false && isMgr(s) && s.id !== me.id)
+      out.push({ to: s.id, data: { title: "New offer to approve", body: me.name + " offered on " + (asker ? asker.name + "'s " : "") + (rq ? shiftWords(rq) : "a shift"), tag: "offer-" + next.reqId, view: "manage" } });
+  }
+  return out;
+}
+function later(ctx, promise) { if (ctx && ctx.waitUntil) ctx.waitUntil(promise.catch(e => console.error(e))); else return promise; }
 
 // ---------- account endpoints ----------
 async function liveStaffCount(env) {
@@ -296,7 +405,7 @@ async function audit(env, me, action, text) {
 }
 async function readBody(req) { try { return await req.json(); } catch (e) { fail(400, "Bad request.", "invalid"); } }
 
-async function route(req, env, url) {
+async function route(req, env, url, ctx) {
   const path = url.pathname, method = req.method;
 
   if (path === "/api/status" && method === "GET") return json({ needsSetup: (await liveStaffCount(env)) === 0 });
@@ -331,7 +440,27 @@ async function route(req, env, url) {
     return json({ ok: true });
   }
   if (path === "/api/sync" && method === "GET") return handleSync(env, me, url);
-  if (path === "/api/write" && method === "POST") return handleWrite(env, me, await readBody(req));
+  if (path === "/api/write" && method === "POST") return handleWrite(env, me, await readBody(req), ctx, url.origin);
+
+  if (path === "/api/push/key" && method === "GET") return json({ key: (await getVapid(env)).pub });
+  if (path === "/api/push/subscribe" && method === "POST") {
+    const b = await readBody(req), k = b.keys || {};
+    if (typeof b.endpoint !== "string" || !b.endpoint.startsWith("https://") || b.endpoint.length > 1000 || typeof k.p256dh !== "string" || typeof k.auth !== "string") fail(400, "That phone's notification details look wrong.", "invalid");
+    await env.DB.prepare("INSERT INTO push_subs (endpoint, staff_id, p256dh, auth, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(endpoint) DO UPDATE SET staff_id = excluded.staff_id, p256dh = excluded.p256dh, auth = excluded.auth")
+      .bind(b.endpoint, me.id, k.p256dh, k.auth, Date.now()).run();
+    return json({ ok: true });
+  }
+  if (path === "/api/push/unsubscribe" && method === "POST") {
+    const b = await readBody(req);
+    await env.DB.prepare("DELETE FROM push_subs WHERE endpoint = ?1 AND staff_id = ?2").bind(String(b.endpoint || ""), me.id).run();
+    return json({ ok: true });
+  }
+  if (path === "/api/push/test" && method === "POST") {
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM push_subs WHERE staff_id = ?1").bind(me.id).first();
+    if (!n || !n.n) fail(404, "Notifications aren't on for this account yet.", "missing");
+    await later(ctx, deliverPushes(env, [{ to: me.id, data: { title: "DC SH!FTZ", body: "Notifications are on. You'll hear about shifts here.", tag: "test", view: "open" } }], url.origin));
+    return json({ ok: true });
+  }
 
   if (path === "/api/pin" && method === "POST") { // set or change your own code
     const b = await readBody(req);
@@ -411,7 +540,10 @@ const SCHEMA = [
   "CREATE INDEX IF NOT EXISTS docs_updated ON docs (updated_at)",
   "CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, staff_id TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL)",
   "CREATE INDEX IF NOT EXISTS sessions_staff ON sessions (staff_id)",
-  "CREATE TABLE IF NOT EXISTS login_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start INTEGER NOT NULL)"
+  "CREATE TABLE IF NOT EXISTS login_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start INTEGER NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, staff_id TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created_at INTEGER NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS push_subs_staff ON push_subs (staff_id)",
+  "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
 ];
 let schemaReady = null;
 function ensureSchema(env) {
@@ -420,10 +552,10 @@ function ensureSchema(env) {
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
-    try { await ensureSchema(env); return await route(req, env, url); }
+    try { await ensureSchema(env); return await route(req, env, url, ctx); }
     catch (e) {
       if (e instanceof HttpError) return json({ error: e.message, code: e.code }, e.status);
       console.error(e);

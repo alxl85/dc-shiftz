@@ -1,6 +1,6 @@
 # DC SH!FTZ on Cloudflare (free)
 
-DC SH!FTZ v2.0.0: the same app the team uses now, moved off the Claude-hosted page onto its own free server and database.
+DC SH!FTZ v2.1.1: the same app the team uses now, moved off the Claude-hosted page onto its own free server and database.
 
 - **App + server:** one Cloudflare Worker (`src/worker.js`) serves the screens (`public/`) and the API (`/api/*`).
 - **Database:** Cloudflare D1, a SQLite database (`schema.sql`).
@@ -101,7 +101,15 @@ Every record is stored as a JSON document in the `docs` table (`col` = record ty
 | Manager | Everything: approvals, worked/no-show, staff, settings, audit log, test mode. Can't change the Admin account |
 | Admin | Everything a manager can, plus editing Admin accounts and making Admins |
 
+## Phone notifications
+
+Each person turns them on in **My account → Phone notifications**. On iPhone, the app has to be added to the Home Screen first (iOS 16.4 or later). The server makes its own notification keys the first time they're needed, so there's nothing to set up in Cloudflare. They notify:
+
+- **Everyone:** a new shift needing cover (each person can switch this one off), a coworker asking them to confirm a cover, their request approved or denied, being given a shift, a shift they offered on closing, and direct messages.
+- **Managers:** a new offer waiting for approval.
+
+One change notifies at most 40 phones, which stays inside the free plan's limit of 50 outgoing requests per call.
+
 ## Not done yet
 
-- **Push notifications** for new open shifts. These are possible for free now that the app has its own site, as a next step.
 - **Multiple stores:** see the DC SH!FTZ Multi-Store Plan doc. The `docs` table already makes adding a `storeId` straightforward.

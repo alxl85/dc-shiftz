@@ -27,3 +27,19 @@ CREATE TABLE IF NOT EXISTS login_attempts (
   count        INTEGER NOT NULL,
   window_start INTEGER NOT NULL
 );
+
+-- Phones that turned on notifications (one row per phone/browser).
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint   TEXT PRIMARY KEY,
+  staff_id   TEXT    NOT NULL,
+  p256dh     TEXT    NOT NULL,
+  auth       TEXT    NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS push_subs_staff ON push_subs (staff_id);
+
+-- Server settings it makes for itself (the notification signing key).
+CREATE TABLE IF NOT EXISTS kv (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);

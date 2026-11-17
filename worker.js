@@ -120,7 +120,12 @@ function filterDoc(me, col, id, d) {
     return rest;
   }
   if (col === "requests") {
-    if (sees(me) || d.requesterId === me.id) return d;
+    if (sees(me) || (d.requesterId === me.id && d.kind !== "extra")) return d;
+    if (d.kind === "extra") { // manager-posted extra shift: staff see the note, never which manager posted it
+      const { requesterId, outcome, outcomeBy, outcomeAt, excused, decidedBy, ...rest } = d;
+      if (d.assignedTo === me.id) Object.assign(rest, { outcome, outcomeAt, excused });
+      return rest;
+    }
     const { note, outcome, outcomeBy, outcomeAt, excused, decidedBy, ...rest } = d;
     if (d.assignedTo === me.id) Object.assign(rest, { outcome, outcomeAt, excused });
     return rest;
@@ -209,6 +214,8 @@ function checkWrite(me, op, col, id, cur, patch, next) {
       if (op === "delete") fail(403, "Requests can't be deleted.", "forbidden");
       if (op === "add") {
         if (next.requesterId !== me.id) fail(403, "You can only request cover for yourself.", "forbidden");
+        if (next.kind !== undefined && next.kind !== "extra") fail(400, "Unknown request type.", "invalid");
+        if (next.kind === "extra" && (!mgr || next.status !== "open" || next.mode !== "open")) fail(403, "Only managers can post extra open shifts.", "forbidden");
         if (!["open", "confirming"].includes(next.status) || next.assignedTo) fail(400, "New requests start open.", "invalid");
         return;
       }
@@ -376,9 +383,9 @@ async function pushesFor(env, me, op, col, id, cur, next) {
   }
   if (col === "requests" && next && next.status === "open" && (op === "add" || (cur && cur.status !== "open"))) {
     const all = await listCol(env, "staff");
-    const who = all.find(s => s.id === next.requesterId);
+    const extra = next.kind === "extra", who = !extra && all.find(s => s.id === next.requesterId);
     for (const s of all) if (s.active !== false && s.id !== next.requesterId && s.pushOpen !== false)
-      out.push({ to: s.id, data: { title: "Shift needs cover", body: shiftWords(next) + " · " + next.position + (who ? " · " + who.name : ""), tag: "open-" + id, view: "open" } });
+      out.push({ to: s.id, data: { title: extra ? "Extra shift available" : "Shift needs cover", body: shiftWords(next) + " · " + next.position + (who ? " · " + who.name : ""), tag: "open-" + id, view: "open" } });
   }
   if (col === "messages" && op === "add" && String(next.conv).startsWith("dm:")) {
     const other = next.conv.split(":").slice(1).find(x => x !== me.id);
@@ -387,9 +394,9 @@ async function pushesFor(env, me, op, col, id, cur, next) {
   if (col === "volunteers" && op === "set") {
     const rq = strip(await getDoc(env, "requests", String(next.reqId)));
     const all = await listCol(env, "staff");
-    const asker = rq && all.find(s => s.id === rq.requesterId);
+    const asker = rq && rq.kind !== "extra" && all.find(s => s.id === rq.requesterId);
     for (const s of all) if (s.active !== false && isMgr(s) && s.id !== me.id)
-      out.push({ to: s.id, data: { title: "New offer to approve", body: me.name + " offered on " + (asker ? asker.name + "'s " : "") + (rq ? shiftWords(rq) : "a shift"), tag: "offer-" + next.reqId, view: "manage" } });
+      out.push({ to: s.id, data: { title: "New offer to approve", body: me.name + " offered on " + (rq && rq.kind === "extra" ? "the extra " : asker ? asker.name + "'s " : "") + (rq ? shiftWords(rq) : "a shift"), tag: "offer-" + next.reqId, view: "manage" } });
   }
   return out;
 }

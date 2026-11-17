@@ -1,6 +1,6 @@
 # DC SH!FTZ on Cloudflare (free)
 
-DC SH!FTZ v2.1.1: the same app the team uses now, moved off the Claude-hosted page onto its own free server and database.
+DC SH!FTZ v2.1.2: the same app the team uses now, moved off the Claude-hosted page onto its own free server and database.
 
 - **App + server:** one Cloudflare Worker (`src/worker.js`) serves the screens (`public/`) and the API (`/api/*`).
 - **Database:** Cloudflare D1, a SQLite database (`schema.sql`).
@@ -87,7 +87,7 @@ public/manifest...       home-screen name and icons
 src/worker.js            the server: login, sessions, permissions, live updates, nightly cleanup
 schema.sql               database tables (docs, sessions, login_attempts)
 migration/live-data.sql  your data exported from the Claude version (don't commit)
-test/                    local test server + 59 automated checks
+test/                    local test server + 95 automated checks
 ```
 
 Every record is stored as a JSON document in the `docs` table (`col` = record type, `id` = record id). This keeps the same data shapes the Claude version used. Test-mode records live in the same table with a `t_` prefix and are only visible to managers.
@@ -98,14 +98,14 @@ Every record is stored as a JSON document in the `docs` table (`col` = record ty
 |---|---|
 | Employee | See open shifts and their own history, request cover, offer on shifts, confirm arranged covers, chat, change their own code |
 | Lead | Everything an employee can, plus Reports (Excel download, email to HR) |
-| Manager | Everything: approvals, worked/no-show, staff, settings, audit log, test mode. Can't change the Admin account |
+| Manager | Everything: approvals, worked/no-show, staff, settings, audit log, test mode, posting extra open shifts. Can't change the Admin account |
 | Admin | Everything a manager can, plus editing Admin accounts and making Admins |
 
 ## Phone notifications
 
 Each person turns them on in **My account → Phone notifications**. On iPhone, the app has to be added to the Home Screen first (iOS 16.4 or later). The server makes its own notification keys the first time they're needed, so there's nothing to set up in Cloudflare. They notify:
 
-- **Everyone:** a new shift needing cover (each person can switch this one off), a coworker asking them to confirm a cover, their request approved or denied, being given a shift, a shift they offered on closing, and direct messages.
+- **Everyone:** a new shift needing cover or an extra shift a manager posted (each person can switch this one off), a coworker asking them to confirm a cover, their request approved or denied, being given a shift, a shift they offered on closing, and direct messages.
 - **Managers:** a new offer waiting for approval.
 
 One change notifies at most 40 phones, which stays inside the free plan's limit of 50 outgoing requests per call.

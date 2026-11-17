@@ -366,7 +366,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   <header class="bar">
     <div class="wrap">
       <button class="logo brand" id="logo" type="button" aria-label="DC SH!FTZ"></button>
-      <span class="ver">v2.1.1</span>
+      <span class="ver">v2.1.2</span>
       <button class="who-btn" id="whoBtn" type="button" aria-label="My account"><span class="nm" id="whoName"></span></button>
     </div>
   </header>
@@ -400,8 +400,15 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
 
     <!-- REQUEST COVER -->
     <section id="v-request" hidden>
-      <div class="view-head"><h2>Request cover</h2></div>
+      <div class="view-head"><h2 id="reqTitle">Request cover</h2></div>
       <form class="panel" id="reqForm" novalidate>
+        <div class="field" id="kindBox" hidden>
+          <span class="flabel">What are you posting?</span>
+          <div class="seg">
+            <label><input type="radio" name="rKind" id="rKindCover" value="cover" checked>My shift<small>I need cover</small></label>
+            <label><input type="radio" name="rKind" id="rKindExtra" value="extra">Open shift<small>extra hours</small></label>
+          </div>
+        </div>
         <div class="field">
           <label for="rDate">Date</label>
           <input type="date" id="rDate">
@@ -423,10 +430,10 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
           <select id="rPos"></select>
         </div>
         <div class="field">
-          <label for="rNote">Note for management (optional)</label>
+          <label for="rNote" id="rNoteLbl">Note for management (optional)</label>
           <textarea id="rNote" rows="2" maxlength="200" placeholder="Only managers see this."></textarea>
         </div>
-        <label class="check"><input type="checkbox" id="rArranged"><span>I already found someone to cover this shift</span></label>
+        <label class="check" id="arrangedChk"><input type="checkbox" id="rArranged"><span>I already found someone to cover this shift</span></label>
         <div class="field" id="arrangedBox" hidden>
           <label for="rWith">Who's covering?</label>
           <select id="rWith"></select>
@@ -878,6 +885,9 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   function fmtTs(ms) { const d = new Date(ms); return d.toDateString() === new Date().toDateString() ? clock(ms) : MON[d.getMonth()] + " " + d.getDate() + " · " + clock(ms); }
   const nameOf = (id) => (S.staff[id] && S.staff[id].name) || "Former employee";
+  const isExtra = (r) => !!(r && r.kind === "extra"); // a manager-posted open shift: nobody is giving it away
+  const whoFor = (r) => isExtra(r) ? "Extra shift" : nameOf(r.requesterId);
+  const whoseShift = (r) => isExtra(r) ? "the extra" : nameOf(r.requesterId) + "'s";
   const me = () => S.staff[S.meId] || null;
   const isAdminRole = (s) => !!(s && s.role === "admin");
   const isMgrRole = (s) => !!(s && (s.role === "management" || s.role === "admin"));
@@ -963,8 +973,8 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   // ---------- reliability ----------
   function record(staffId, sinceDate) {
     const rs = S.requests.filter(r => !sinceDate || r.date >= sinceDate);
-    const asked = rs.filter(r => r.requesterId === staffId && r.status !== "cancelled").length;
-    const given = rs.filter(r => r.requesterId === staffId && r.status === "approved").length;
+    const asked = rs.filter(r => r.requesterId === staffId && !isExtra(r) && r.status !== "cancelled").length;
+    const given = rs.filter(r => r.requesterId === staffId && !isExtra(r) && r.status === "approved").length;
     const covered = rs.filter(r => r.assignedTo === staffId && r.status === "approved" && r.outcome === "worked").length;
     const noShows = rs.filter(r => r.assignedTo === staffId && r.outcome === "noshow" && !r.excused).length;
     const excused = rs.filter(r => r.assignedTo === staffId && r.outcome === "noshow" && r.excused).length;
@@ -1119,7 +1129,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     if (!cur || cur.status !== "open") throw userErr("This shift no longer needs to be covered.");
     const trained = eligible(me(), r.position);
     await D("volunteers", r.id + "__" + S.meId).set({ reqId: r.id, staffId: S.meId, ts: Date.now(), trained });
-    await audit("offered", r, me().name + " offered to take " + nameOf(r.requesterId) + "'s shift" + (trained ? "" : " (not trained for " + r.position + ", cross-training request)"));
+    await audit("offered", r, me().name + " offered to take " + whoseShift(r) + " shift" + (trained ? "" : " (not trained for " + r.position + ", cross-training request)"));
     toast(trained ? "Request sent. Management will pick who gets it." : "Request sent. Management will decide if this can be a cross-training shift.");
   }
   async function unvolunteer(r) {
@@ -1129,12 +1139,19 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   }
   function renderOpen() {
     const list = openForMe();
-    const others = list.filter(r => r.requesterId !== S.meId).length;
-    $("openMeta").textContent = others ? others + " need cover" : "";
+    const others = list.filter(r => r.requesterId !== S.meId || isExtra(r)).length;
+    $("openMeta").textContent = others ? others + " open" : "";
     if (!list.length) return $("openList").replaceChildren(empty("No open shifts right now", "When a coworker needs a shift covered, it shows up here."));
     $("openList").replaceChildren(...list.map(r => {
       const callOff = r.createdAt && startOf(r) - r.createdAt < 2 * 36e5 ? el("span", { class: "badge b-bad" }, "Call-off") : null;
-      if (r.requesterId === S.meId) {
+      const noteLine = isExtra(r) && r.note ? el("div", { class: "memo" }, r.note) : null;
+      if (isExtra(r) && isMgr()) { // managers fill extra shifts from Approvals; here they can see it and take it down
+        const n = S.vols.filter(v => v.reqId === r.id).length;
+        return shiftCard(r, { lead: el("span", null, el("b", null, "Extra shift"), " · posted by ", r.requesterId === S.meId ? "you" : nameOf(r.requesterId)), badge: el("span", { class: "badge b-open" }, "Extra"),
+          body: el("div", null, noteLine, el("div", { class: "line" }, n ? n + (n === 1 ? " person has" : " people have") + " offered. Pick one in Manage → Approvals." : "No offers yet.")),
+          actions: [twoTap("Remove shift", "Tap again to remove", "no", () => cancelReq(r))] });
+      }
+      if (r.requesterId === S.meId && !isExtra(r)) {
         const [badge, text] = reqStatusBadge(r);
         return shiftCard(r, { lead: el("span", null, el("b", null, "Your shift"), " · you asked for cover"), badge: el("span", { class: "row1" }, el("span", { class: "badge b-wait" }, "Yours"), badge, callOff),
           body: el("div", { class: "line" }, text), actions: [twoTap("Cancel request", "Tap again to cancel", "no", () => cancelReq(r))] });
@@ -1145,9 +1162,9 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       const trained = eligible(me(), r.position);
       if (!mine) { const b = el("button", { class: "btn primary", type: "button" }, trained ? "I can take it" : "Ask to work it"); b.onclick = busy(b, () => volunteer(r)); actions.push(b); }
       return shiftCard(r, {
-        lead: el("span", null, el("b", null, nameOf(r.requesterId)), " needs cover"),
-        badge: mine || callOff ? el("span", { class: "row1" }, mine ? el("span", { class: "badge b-wait" }, "Requested") : null, callOff) : null,
-        body: trained ? null : el("div", { class: "line" }, el("span", { class: "badge b-open" }, "Cross-train"), " You're not trained for " + r.position + " yet. Ask to work it and management can make it a training shift."),
+        lead: isExtra(r) ? el("span", null, el("b", null, "Extra shift"), " available") : el("span", null, el("b", null, nameOf(r.requesterId)), " needs cover"),
+        badge: mine || callOff || isExtra(r) ? el("span", { class: "row1" }, isExtra(r) ? el("span", { class: "badge b-open" }, "Extra") : null, mine ? el("span", { class: "badge b-wait" }, "Requested") : null, callOff) : null,
+        body: trained ? noteLine : el("div", null, noteLine, el("div", { class: "line" }, el("span", { class: "badge b-open" }, "Cross-train"), " You're not trained for " + r.position + " yet. Ask to work it and management can make it a training shift.")),
         actions
       });
     }));
@@ -1169,20 +1186,20 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const cur = await freshReq(r.id);
     if (!cur || !["open", "confirming", "review"].includes(cur.status)) throw userErr("This request was already decided.");
     await reqRef(r.id).update({ status: "cancelled", updatedAt: Date.now() });
-    if (S.test) {
+    if (S.test || isMgr()) { // the server only tells offerers itself when an employee cancels
       const tell = new Set(S.vols.filter(v => v.reqId === r.id).map(v => v.staffId)); if (cur.arrangedWith) tell.add(cur.arrangedWith);
       for (const id of tell) await notify(id, "closed", r, "The " + shiftLabel(r) + " shift no longer needs to be covered.");
     }
-    await audit("cancelled", r, me().name + " cancelled their cover request");
-    toast("Request cancelled.");
+    await audit("cancelled", r, isExtra(r) ? me().name + " removed the extra " + r.position + " shift" : me().name + " cancelled their cover request");
+    toast(isExtra(r) ? "Extra shift removed." : "Request cancelled.");
   }
   function renderMine() {
     const covering = S.requests.filter(r => r.status === "approved" && r.assignedTo === S.meId && isFuture(r)).sort((a, b) => startOf(a) - startOf(b));
     $("coverList").replaceChildren(...(covering.length ? covering.map(r => shiftCard(r, {
-      noUrg: true, badge: el("span", { class: "badge b-ok" }, "You're on"), lead: el("span", null, "Covering for ", el("b", null, nameOf(r.requesterId)))
+      noUrg: true, badge: el("span", { class: "badge b-ok" }, "You're on"), lead: isExtra(r) ? el("span", null, el("b", null, "Extra shift")) : el("span", null, "Covering for ", el("b", null, nameOf(r.requesterId)))
     })) : [empty("Nothing yet", "Approved pickups land here.")]));
 
-    const mine = S.requests.filter(r => r.requesterId === S.meId && isFuture(r) && r.status !== "cancelled").sort((a, b) => startOf(a) - startOf(b));
+    const mine = S.requests.filter(r => r.requesterId === S.meId && !isExtra(r) && isFuture(r) && r.status !== "cancelled").sort((a, b) => startOf(a) - startOf(b));
     $("myReqList").replaceChildren(...(mine.length ? mine.map(r => {
       const [badge, text] = reqStatusBadge(r);
       const actions = ["open", "confirming", "review"].includes(r.status) ? [twoTap("Cancel request", "Tap again to cancel", "no", () => cancelReq(r))] : [];
@@ -1200,7 +1217,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     }) : [empty("No offers", "Shifts you offer to take from Open shifts show here.")]));
 
     // coverage history: past requests and shifts covered
-    const asked = S.requests.filter(r => r.requesterId === S.meId && (!isFuture(r) || r.status === "cancelled" || r.status === "denied")).sort((a, b) => startOf(b) - startOf(a));
+    const asked = S.requests.filter(r => r.requesterId === S.meId && !isExtra(r) && (!isFuture(r) || r.status === "cancelled" || r.status === "denied")).sort((a, b) => startOf(b) - startOf(a));
     const covered = S.requests.filter(r => r.assignedTo === S.meId && r.status === "approved" && !isFuture(r)).sort((a, b) => startOf(b) - startOf(a));
     $("hAskN").textContent = asked.length + (asked.length === 1 ? " request" : " requests");
     $("hCovN").textContent = covered.length + (covered.length === 1 ? " shift" : " shifts");
@@ -1208,7 +1225,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const rows = (showCov ? covered : asked).slice(0, 100).map(r => {
       let badge, text;
       if (showCov) {
-        text = "You covered for " + nameOf(r.requesterId) + (eligible(me(), r.position) ? "" : " (cross-training)");
+        text = (isExtra(r) ? "You worked an extra shift" : "You covered for " + nameOf(r.requesterId)) + (eligible(me(), r.position) ? "" : " (cross-training)");
         badge = r.outcome === "worked" ? ["b-ok", "Worked"] : r.outcome === "noshow" ? (r.excused ? ["b-gone", "Excused"] : ["b-bad", "No-show"]) : ["b-wait", "Not checked yet"];
       } else if (r.status === "approved") { badge = ["b-ok", "Covered"]; text = nameOf(r.assignedTo) + " covered this shift."; }
       else if (r.status === "denied") { badge = ["b-bad", "Denied"]; text = "Management denied this request. You kept the shift."; }
@@ -1222,6 +1239,16 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   // ---------- REQUEST COVER ----------
   ["hAsk", "hCov"].forEach(id => $(id).addEventListener("change", render));
   function syncType() { $("customTimes").hidden = !$("rTypeX").checked; }
+  const postingExtra = () => isMgr() && $("rKindExtra").checked;
+  function syncKind() {
+    const x = postingExtra();
+    $("reqTitle").textContent = x ? "Post an open shift" : "Request cover";
+    $("arrangedChk").hidden = x; if (x) { $("rArranged").checked = false; $("arrangedBox").hidden = true; }
+    $("rNoteLbl").textContent = x ? "Note for staff (optional)" : "Note for management (optional)";
+    $("rNote").placeholder = x ? "Shown with the shift, e.g. \"Holiday rush\"." : "Only managers see this.";
+    $("reqBtn").textContent = x ? "Post open shift" : "Send request";
+  }
+  ["rKindCover", "rKindExtra"].forEach(id => $(id).addEventListener("change", syncKind));
   ["rTypeM", "rTypeC", "rTypeX"].forEach(id => $(id).addEventListener("change", syncType));
   $("rArranged").addEventListener("change", () => { $("arrangedBox").hidden = !$("rArranged").checked; fillWith(); });
   $("rPos").addEventListener("change", fillWith);
@@ -1240,7 +1267,8 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const t = todayStr(); $("rDate").min = t; if (!$("rDate").value || $("rDate").value < t) $("rDate").value = t;
     const ps = qualified(m).length ? qualified(m) : POS;
     fillSelect($("rPos"), ps.map(p => [p, p]), true);
-    fillWith(); syncType(); $("reqErr").textContent = "";
+    $("kindBox").hidden = !isMgr(); if (!isMgr()) $("rKindCover").checked = true;
+    fillWith(); syncType(); syncKind(); $("reqErr").textContent = "";
   }
   $("reqForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const err = $("reqErr"); err.textContent = "";
@@ -1249,21 +1277,24 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const start = type === "custom" ? $("rStart").value : PRESET[type].start;
     const end = type === "custom" ? $("rEnd").value : PRESET[type].end;
     const position = $("rPos").value, note = $("rNote").value.trim();
-    const arranged = $("rArranged").checked, withId = $("rWith").value;
-    if (!date) return (err.textContent = "Pick the date you need covered.");
+    const extra = postingExtra(), arranged = !extra && $("rArranged").checked, withId = $("rWith").value;
+    if (!date) return (err.textContent = extra ? "Pick the date of the shift." : "Pick the date you need covered.");
     if (!start || !end) return (err.textContent = "Set a start and end time.");
     if (start === end) return (err.textContent = "Start and end can't be the same time.");
     if (startOf({ date, start, end }).getTime() <= Date.now()) return (err.textContent = "That shift has already started. Pick a later date or time.");
     if (arranged && !withId) return (err.textContent = "Choose who is covering, or untick the box to post it to open shifts.");
-    const dup = S.requests.find(r => r.requesterId === S.meId && r.date === date && ["open", "confirming", "review", "approved"].includes(r.status) && r.start < end && start < r.end);
+    const dup = !extra && S.requests.find(r => r.requesterId === S.meId && !isExtra(r) && r.date === date && ["open", "confirming", "review", "approved"].includes(r.status) && r.start < end && start < r.end);
     if (dup) return (err.textContent = "You already have a cover request for that time.");
     const btn = $("reqBtn"); btn.disabled = true;
     try {
-      const data = { requesterId: S.meId, position, date, start, end, shiftType: type, note, mode: arranged ? "arranged" : "open",
+      const data = { ...(extra ? { kind: "extra" } : {}), requesterId: S.meId, position, date, start, end, shiftType: type, note, mode: arranged ? "arranged" : "open",
         arrangedWith: arranged ? withId : null, status: arranged ? "confirming" : "open", assignedTo: null, decidedBy: null, createdAt: Date.now(), updatedAt: Date.now() };
       const ref = await C("requests").add(data);
       const r = { id: ref.id, ...data };
-      if (arranged) {
+      if (extra) {
+        await audit("requested", r, me().name + " posted an extra " + position + " shift to open shifts");
+        toast("Extra shift posted to open shifts.");
+      } else if (arranged) {
         await notify(withId, "confirm", r, me().name + " says you agreed to cover their " + shiftLabel(r) + " " + position + " shift. Please confirm.");
         await audit("requested", r, me().name + " requested cover, arranged with " + nameOf(withId));
         toast("Sent to " + nameOf(withId) + " to confirm.");
@@ -1272,7 +1303,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
         toast("Posted to open shifts.");
       }
       $("rNote").value = ""; $("rArranged").checked = false; $("arrangedBox").hidden = true;
-      setView("mine");
+      if (extra) { $("rKindCover").checked = true; setView("open"); } else setView("mine");
     } catch (x) { err.textContent = "Couldn't send the request. Check your connection and try again."; }
     finally { btn.disabled = false; }
   });
@@ -1494,25 +1525,28 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const cur = await freshReq(r.id);
     if (!cur || !["open", "review"].includes(cur.status)) throw userErr("This request was already decided or cancelled.");
     await reqRef(r.id).update({ status: "approved", assignedTo: staffId, decidedBy: S.meId, decidedAt: Date.now(), updatedAt: Date.now() });
-    await notify(cur.requesterId, "info", r, "Approved: " + nameOf(staffId) + " is covering your " + shiftLabel(r) + " shift.");
-    await notify(staffId, "info", r, "You're covering " + nameOf(cur.requesterId) + "'s " + shiftLabel(r) + " " + r.position + " shift. It's on your schedule now.");
+    if (isExtra(cur)) await notify(staffId, "info", r, "You're working the extra " + shiftLabel(r) + " " + r.position + " shift. It's on your schedule now.");
+    else {
+      await notify(cur.requesterId, "info", r, "Approved: " + nameOf(staffId) + " is covering your " + shiftLabel(r) + " shift.");
+      await notify(staffId, "info", r, "You're covering " + nameOf(cur.requesterId) + "'s " + shiftLabel(r) + " " + r.position + " shift. It's on your schedule now.");
+    }
     for (const v of S.vols.filter(v => v.reqId === r.id)) if (v.staffId !== staffId) await notify(v.staffId, "closed", r, "The " + shiftLabel(r) + " shift no longer needs to be covered.");
-    await audit("approved", r, me().name + " approved " + nameOf(staffId) + " covering for " + nameOf(cur.requesterId) + (eligible(S.staff[staffId], r.position) ? "" : " (cross-training)"));
+    await audit("approved", r, me().name + " approved " + nameOf(staffId) + (isExtra(cur) ? " for the extra shift" : " covering for " + nameOf(cur.requesterId)) + (eligible(S.staff[staffId], r.position) ? "" : " (cross-training)"));
     toast("Approved. " + nameOf(staffId) + " has the shift.");
   }
   async function deny(r) {
     const cur = await freshReq(r.id);
     if (!cur || !["open", "review", "confirming"].includes(cur.status)) throw userErr("This request was already decided or cancelled.");
     await reqRef(r.id).update({ status: "denied", decidedBy: S.meId, decidedAt: Date.now(), updatedAt: Date.now() });
-    await notify(cur.requesterId, "info", r, "Denied: your cover request for " + shiftLabel(r) + " wasn't approved. You're still scheduled.");
+    if (!isExtra(cur)) await notify(cur.requesterId, "info", r, "Denied: your cover request for " + shiftLabel(r) + " wasn't approved. You're still scheduled.");
     const tell = new Set(S.vols.filter(v => v.reqId === r.id).map(v => v.staffId)); if (cur.arrangedWith) tell.add(cur.arrangedWith);
     for (const id of tell) await notify(id, "closed", r, "The " + shiftLabel(r) + " shift no longer needs to be covered.");
-    await audit("denied", r, me().name + " denied " + nameOf(cur.requesterId) + "'s cover request");
-    toast("Denied. " + nameOf(cur.requesterId) + " keeps the shift.");
+    await audit("denied", r, isExtra(cur) ? me().name + " closed the extra shift without picking anyone" : me().name + " denied " + nameOf(cur.requesterId) + "'s cover request");
+    toast(isExtra(cur) ? "Extra shift closed." : "Denied. " + nameOf(cur.requesterId) + " keeps the shift.");
   }
   async function setOutcome(r, outcome) {
     await reqRef(r.id).update({ outcome, outcomeBy: S.meId, outcomeAt: Date.now(), updatedAt: Date.now() });
-    await audit(outcome === "worked" ? "worked" : "no_show", r, me().name + " marked " + nameOf(r.assignedTo) + (outcome === "worked" ? " as worked the shift" : " as a no-show") + " (covering for " + nameOf(r.requesterId) + ")");
+    await audit(outcome === "worked" ? "worked" : "no_show", r, me().name + " marked " + nameOf(r.assignedTo) + (outcome === "worked" ? " as worked the shift" : " as a no-show") + (isExtra(r) ? " (extra shift)" : " (covering for " + nameOf(r.requesterId) + ")"));
     toast(outcome === "worked" ? "Marked as worked." : "No-show recorded. You can excuse it from their profile on the Staff tab.");
   }
   const pendingApprovals = () => S.requests.filter(r => ["open", "review", "confirming"].includes(r.status) && isFuture(r)).sort((a, b) => startOf(a) - startOf(b));
@@ -1527,7 +1561,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   const avg = (xs) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
   const noticeOf = (r) => r.createdAt ? startOf(r) - r.createdAt : null;
   function askStats(id, since) {
-    const rs = S.requests.filter(r => r.requesterId === id && (!since || r.date >= since));
+    const rs = S.requests.filter(r => r.requesterId === id && !isExtra(r) && (!since || r.date >= since));
     const n = rs.map(noticeOf).filter(x => x != null && x > 0);
     return { count: rs.filter(r => r.status !== "cancelled").length, avg: avg(n), short: n.filter(x => x < 24 * 36e5).length, callOffs: n.filter(x => x < 2 * 36e5).length };
   }
@@ -1554,7 +1588,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
   }
   function personDetails(staffId, r) {
     const s = S.staff[staffId] || {}, rec = record(staffId), ask = askStats(staffId), off = offerStats(staffId);
-    const sameDay = S.requests.filter(x => x.id !== r.id && x.date === r.date && ((x.status === "approved" && x.assignedTo === staffId) || (x.requesterId === staffId && ["open", "confirming", "review", "approved"].includes(x.status))));
+    const sameDay = S.requests.filter(x => x.id !== r.id && x.date === r.date && ((x.status === "approved" && x.assignedTo === staffId) || (x.requesterId === staffId && !isExtra(x) && ["open", "confirming", "review", "approved"].includes(x.status))));
     const lastCov = S.requests.filter(x => x.assignedTo === staffId && x.outcome === "worked").sort((a, b) => startOf(b) - startOf(a))[0];
     const rows = [
       ["Positions", el("span", { class: "chips" }, posChips(s),
@@ -1568,6 +1602,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     return el("dl", { class: "kv" }, rows.flatMap(([k, v, c]) => [el("dt", null, k), el("dd", { class: c || "" }, v)]));
   }
   function requesterSummary(r) {
+    if (isExtra(r)) return el("div", { class: "reqsum" }, "Extra shift posted by ", el("b", null, nameOf(r.requesterId)), " ", fmtDur(r.createdAt ? startOf(r) - r.createdAt : null), " before it starts");
     const n = noticeOf(r), ask = askStats(r.requesterId);
     return el("div", { class: "reqsum" },
       "Posted ", el("b", null, fmtDur(n)), " before the shift", n != null && n < 2 * 36e5 ? el("span", { class: "badge b-bad", style: "margin-left:6px" }, "Call-off") : n != null && n < 24 * 36e5 ? el("span", { class: "badge b-wait", style: "margin-left:6px" }, "Short notice") : null,
@@ -1592,7 +1627,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       : el("span", { class: "badge b-wait" }, "Confirm");
     const key = "a:" + r.id;
     return shiftCard(r, { noUrg: true, badge,
-      lead: el("span", null, el("b", null, nameOf(r.requesterId)), " → ", el("b", null, nameOf(r.assignedTo)), eligible(S.staff[r.assignedTo], r.position) ? "" : " (cross-train)"),
+      lead: el("span", null, el("b", null, whoFor(r)), " → ", el("b", null, nameOf(r.assignedTo)), eligible(S.staff[r.assignedTo], r.position) ? "" : " (cross-train)"),
       body: [el("div", { class: "line" }, "Approved by " + nameOf(r.decidedBy) + (r.decidedAt ? " · " + fmtTs(r.decidedAt) : "") + (r.mode === "arranged" ? " · arranged between them" : "")),
         requesterSummary(r), detToggle(key), openDet.has(key) ? personDetails(r.assignedTo, r) : null] });
   }
@@ -1607,7 +1642,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       $("confirmList").replaceChildren(...(conf.length ? conf.map(r => {
         const ok = el("button", { class: "btn ok", type: "button" }, "Worked it"); ok.onclick = busy(ok, () => setOutcome(r, "worked"));
         return shiftCard(r, { noUrg: true, badge: el("span", { class: "badge b-wait" }, "Confirm"),
-          lead: el("span", null, el("b", null, nameOf(r.assignedTo)), " covered for ", el("b", null, nameOf(r.requesterId))),
+          lead: isExtra(r) ? el("span", null, el("b", null, nameOf(r.assignedTo)), " worked an extra shift") : el("span", null, el("b", null, nameOf(r.assignedTo)), " covered for ", el("b", null, nameOf(r.requesterId))),
           actions: [ok, twoTap("No-show", "Tap again: no-show", "no", () => setOutcome(r, "noshow"))] });
       }) : [empty("Nothing to confirm", "After a covered shift ends, confirm here that the person actually worked it.")]));
       return;
@@ -1622,7 +1657,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     if (!list.length) return $("apprList").replaceChildren(empty("All caught up", "Cover requests waiting on a decision show up here."));
     $("apprList").replaceChildren(...list.map(r => {
       const body = [requesterSummary(r)];
-      if (r.note) body.push(el("div", { class: "memo" }, "Reason: " + r.note));
+      if (r.note) body.push(el("div", { class: "memo" }, (isExtra(r) ? "Note: " : "Reason: ") + r.note));
       const actions = [];
       if (r.status === "open") {
         const vs = volsFor(r.id);
@@ -1647,9 +1682,9 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       } else {
         body.push(el("div", { class: "line" }, "Waiting for ", el("b", null, nameOf(r.arrangedWith)), " to confirm."));
       }
-      actions.push(twoTap("Deny request", "Tap again to deny", "no", () => deny(r)));
+      actions.push(isExtra(r) ? twoTap("Close shift", "Tap again to close", "no", () => deny(r)) : twoTap("Deny request", "Tap again to deny", "no", () => deny(r)));
       const badge = r.status === "open" ? el("span", { class: "badge b-open" }, "Open") : r.status === "review" ? el("span", { class: "badge b-wait" }, "Arranged") : el("span", { class: "badge b-gone" }, "Confirming");
-      return shiftCard(r, { badge, lead: el("span", null, el("b", null, nameOf(r.requesterId)), " needs cover"), body, actions });
+      return shiftCard(r, { badge: isExtra(r) ? el("span", { class: "row1" }, el("span", { class: "badge b-open" }, "Extra"), badge) : badge, lead: isExtra(r) ? el("span", null, el("b", null, "Extra shift"), " needs someone") : el("span", null, el("b", null, nameOf(r.requesterId)), " needs cover"), body, actions });
     }));
   }
 
@@ -1781,7 +1816,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const pv = $("personView"); const s = S.staff[S.personId];
     if (!s) { pv.hidden = true; return; }
     const rec = record(s.id);
-    const hist = S.requests.filter(r => r.requesterId === s.id || r.assignedTo === s.id).sort((a, b) => startOf(b) - startOf(a)).slice(0, 60);
+    const hist = S.requests.filter(r => (r.requesterId === s.id && !isExtra(r)) || r.assignedTo === s.id).sort((a, b) => startOf(b) - startOf(a)).slice(0, 60);
     pv.hidden = false;
     pv.replaceChildren(el("div", { class: "panel", style: "margin-bottom:12px" },
       el("div", { class: "row1", style: "justify-content:space-between" },
@@ -1798,7 +1833,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
       rec.excused ? el("span", { class: "hint" }, rec.excused + " excused no-show" + (rec.excused > 1 ? "s" : "") + " not counted.") : null,
       el("span", { class: "flabel" }, "History"),
       hist.length ? el("div", { class: "hist" }, hist.map(r => {
-        const asReq = r.requesterId === s.id;
+        const asReq = r.requesterId === s.id && !isExtra(r);
         let badge, extra = null, act = null;
         if (!asReq && r.outcome === "noshow") {
           badge = r.excused ? el("span", { class: "badge b-gone" }, "Excused") : el("span", { class: "badge b-bad" }, "No-show");
@@ -1810,7 +1845,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
         return el("div", { class: "hrow" },
           el("span", null, shiftLabel(r) + " · " + r.position),
           el("span", { class: "actions" }, badge, act),
-          el("span", { class: "hx" }, asReq ? "Asked for cover" + (r.assignedTo ? " · " + nameOf(r.assignedTo) + " covered" : "") : "Covered for " + nameOf(r.requesterId), extra ? " · " + extra : ""));
+          el("span", { class: "hx" }, asReq ? "Asked for cover" + (r.assignedTo ? " · " + nameOf(r.assignedTo) + " covered" : "") : isExtra(r) ? "Worked an extra shift" : "Covered for " + nameOf(r.requesterId), extra ? " · " + extra : ""));
       })) : el("span", { class: "hint" }, "No shift changes yet.")));
   }
   function renderStaff() {
@@ -1838,7 +1873,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     if (!$("hrTo").dataset.touched && document.activeElement !== $("hrTo")) $("hrTo").value = S.settings.hrEmail || "";
     const days = $("rng30").checked ? 30 : $("rng90").checked ? 90 : null;
     const since = days ? addDays(-days) : null;
-    const rs = S.requests.filter(r => r.status !== "cancelled" && (!since || r.date >= since));
+    const rs = S.requests.filter(r => r.status !== "cancelled" && !isExtra(r) && (!since || r.date >= since)); // asks for cover only
     // weekday bars
     const dow = [0, 0, 0, 0, 0, 0, 0]; rs.forEach(r => dow[parseDate(r.date).getDay()]++);
     const max = Math.max(1, ...dow);
@@ -1869,7 +1904,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     ], goPerson, "No offers in this range"));
     // upcoming approved switches
     const up = S.requests.filter(r => r.status === "approved" && isFuture(r)).sort((a, b) => startOf(a) - startOf(b));
-    $("upcoming").replaceChildren(...(up.length ? up.map(r => shiftCard(r, { noUrg: true, lead: el("span", null, el("b", null, nameOf(r.requesterId)), " → ", el("b", null, nameOf(r.assignedTo))) }))
+    $("upcoming").replaceChildren(...(up.length ? up.map(r => shiftCard(r, { noUrg: true, lead: el("span", null, el("b", null, whoFor(r)), " → ", el("b", null, nameOf(r.assignedTo))) }))
       : [empty("No upcoming switches", "Approved cover shows here until the shift happens.")]));
   }
 
@@ -1959,7 +1994,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const requests = rs.map(r => {
       const n = noticeOf(r);
       return { "Date": r.date, "Day": DOW[parseDate(r.date).getDay()], "Start": t12(r.start), "End": t12(r.end), "Shift": shiftName(r), "Position": r.position,
-        "Requested by": nameOf(r.requesterId), "Posted": stamp(r.createdAt), "Notice (h)": hrs(n), "Call-off": n != null && n < 2 * 36e5 ? "Yes" : "",
+        "Requested by": isExtra(r) ? "Extra shift (posted by " + nameOf(r.requesterId) + ")" : nameOf(r.requesterId), "Posted": stamp(r.createdAt), "Notice (h)": hrs(n), "Call-off": n != null && n < 2 * 36e5 ? "Yes" : "",
         "Status": STATUS_TXT[r.status] || r.status, "Covered by": r.assignedTo ? nameOf(r.assignedTo) : "",
         "Cross-train": r.assignedTo && !eligible(S.staff[r.assignedTo], r.position) ? "Yes" : "", "Arranged": r.mode === "arranged" ? "Yes" : "",
         "Decided by": r.decidedBy ? nameOf(r.decidedBy) : "", "Decided": stamp(r.decidedAt),
@@ -1967,13 +2002,13 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
         "Excuse": r.excused ? r.excused.reason : "", "Reason given": r.note || "" };
     });
     const noShows = rs.filter(r => r.outcome === "noshow").map(r => ({ "Date": r.date, "Shift": t12(r.start) + "–" + t12(r.end), "Position": r.position, "Employee": nameOf(r.assignedTo),
-      "Covering for": nameOf(r.requesterId), "Excused": r.excused ? "Yes" : "No", "Excuse reason": r.excused ? r.excused.reason : "", "Excused by": r.excused ? nameOf(r.excused.by) : "", "Marked by": r.outcomeBy ? nameOf(r.outcomeBy) : "" }));
-    const callOffs = rs.filter(r => { const n = noticeOf(r); return n != null && n < 2 * 36e5; }).map(r => ({ "Date": r.date, "Shift": t12(r.start) + "–" + t12(r.end), "Position": r.position,
+      "Covering for": whoFor(r), "Excused": r.excused ? "Yes" : "No", "Excuse reason": r.excused ? r.excused.reason : "", "Excused by": r.excused ? nameOf(r.excused.by) : "", "Marked by": r.outcomeBy ? nameOf(r.outcomeBy) : "" }));
+    const callOffs = rs.filter(r => { if (isExtra(r)) return false; const n = noticeOf(r); return n != null && n < 2 * 36e5; }).map(r => ({ "Date": r.date, "Shift": t12(r.start) + "–" + t12(r.end), "Position": r.position,
       "Employee": nameOf(r.requesterId), "Notice (min)": Math.round(noticeOf(r) / 60e3), "Status": STATUS_TXT[r.status] || r.status, "Covered by": r.assignedTo ? nameOf(r.assignedTo) : "" }));
-    const per = {}; rs.filter(r => r.status !== "cancelled").forEach(r => { (per[r.requesterId] = per[r.requesterId] || [0, 0, 0, 0, 0, 0, 0])[parseDate(r.date).getDay()]++; });
+    const per = {}; rs.filter(r => r.status !== "cancelled" && !isExtra(r)).forEach(r => { (per[r.requesterId] = per[r.requesterId] || [0, 0, 0, 0, 0, 0, 0])[parseDate(r.date).getDay()]++; });
     const weekday = Object.entries(per).map(([id, arr]) => { const o = { "Name": nameOf(id) }; DOW.forEach((d, i) => (o[d] = arr[i])); o["Total"] = arr.reduce((a, b) => a + b, 0); return o; }).sort((a, b) => b.Total - a.Total);
     return { label, since, summary, requests, noShows, callOffs, weekday,
-      totals: { requests: rs.filter(r => r.status !== "cancelled").length, approved: rs.filter(r => r.status === "approved").length, noShows: noShows.filter(r => r.Excused === "No").length, excused: noShows.filter(r => r.Excused === "Yes").length, callOffs: callOffs.length } };
+      totals: { requests: rs.filter(r => r.status !== "cancelled" && !isExtra(r)).length, extras: rs.filter(r => isExtra(r) && r.status === "approved").length, approved: rs.filter(r => r.status === "approved" && !isExtra(r)).length, noShows: noShows.filter(r => r.Excused === "No").length, excused: noShows.filter(r => r.Excused === "Yes").length, callOffs: callOffs.length } };
   }
   const fileName = (d) => "DC-SHIFTZ-report_" + (d.since ? d.since : "all-time") + "_to_" + todayStr() + (S.test ? "_TEST" : "") + ".xlsx";
   function buildWorkbook(d) {
@@ -1992,12 +2027,12 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const cols = ["Name", "Asked off", "Under 24 h", "Call-offs (under 2 h)", "Shifts covered", "No-shows"];
     const td = "padding:4px 8px;border:1px solid #ccc;text-align:left";
     const html = "<p>Hi,</p><p>Attached is the DC SH!FTZ shift-cover report for <b>" + esc(d.label.toLowerCase()) + "</b>" + (d.since ? " (" + esc(d.since) + " to " + esc(todayStr()) + ")" : "") + ".</p>" +
-      "<ul><li>Cover requests: " + d.totals.requests + "</li><li>Approved swaps: " + d.totals.approved + "</li><li>No-shows: " + d.totals.noShows + (d.totals.excused ? " (plus " + d.totals.excused + " excused)" : "") + "</li><li>Call-offs (under 2 hours' notice): " + d.totals.callOffs + "</li></ul>" +
+      "<ul><li>Cover requests: " + d.totals.requests + "</li><li>Approved swaps: " + d.totals.approved + "</li>" + (d.totals.extras ? "<li>Extra shifts filled: " + d.totals.extras + "</li>" : "") + "<li>No-shows: " + d.totals.noShows + (d.totals.excused ? " (plus " + d.totals.excused + " excused)" : "") + "</li><li>Call-offs (under 2 hours' notice): " + d.totals.callOffs + "</li></ul>" +
       (top.length ? "<p><b>Most cover requests</b></p><table style=\"border-collapse:collapse;font-size:13px\"><tr>" + cols.map(c => "<th style=\"" + td + ";background:#f2f2f2\">" + esc(c) + "</th>").join("") + "</tr>" +
         top.map(r => "<tr>" + cols.map(c => "<td style=\"" + td + "\">" + esc(r[c]) + "</td>").join("") + "</tr>").join("") + "</table>" : "") +
       "<p>The workbook has the full per-person summary, every cover request, no-shows, call-offs and a weekday breakdown.</p><p>" + esc(me() ? me().name : "") + "</p>" +
       (S.test ? "<p><b>This report uses practice data from test mode.</b></p>" : "");
-    const text = "Attached is the DC SH!FTZ shift-cover report for " + d.label.toLowerCase() + ".\n\nCover requests: " + d.totals.requests + "\nApproved swaps: " + d.totals.approved +
+    const text = "Attached is the DC SH!FTZ shift-cover report for " + d.label.toLowerCase() + ".\n\nCover requests: " + d.totals.requests + "\nApproved swaps: " + d.totals.approved + (d.totals.extras ? "\nExtra shifts filled: " + d.totals.extras : "") +
       "\nNo-shows: " + d.totals.noShows + "\nCall-offs (under 2 hours' notice): " + d.totals.callOffs + "\n\n" + (me() ? me().name : "") + (S.test ? "\n\nThis report uses practice data from test mode." : "");
     return { html, text };
   }
@@ -2058,11 +2093,11 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     const lines = swaps.map(r => {
       const h = shiftHours(r), ended = endOf(r).getTime() < Date.now();
       const status = r.outcome === "worked" ? "Worked" : r.outcome === "noshow" ? (r.excused ? "No-show (excused)" : "No-show") : ended ? "Not confirmed yet" : "Upcoming";
-      row(r.requesterId).gaveN++; row(r.requesterId).gaveH += h;
+      if (!isExtra(r)) { row(r.requesterId).gaveN++; row(r.requesterId).gaveH += h; }
       if (r.outcome !== "noshow") { row(r.assignedTo).workN++; row(r.assignedTo).workH += h; hours += h; }
       if (r.outcome === "noshow") noShows++; else if (status === "Not confirmed yet") unchecked++;
       return { "Date": r.date, "Day": DOW[parseDate(r.date).getDay()], "Start": t12(r.start), "End": t12(r.end), "Hours": h, "Position": r.position,
-        "Scheduled": nameOf(r.requesterId), "Worked by": r.outcome === "noshow" ? "Nobody (" + nameOf(r.assignedTo) + " no-show)" : nameOf(r.assignedTo),
+        "Scheduled": isExtra(r) ? "Extra shift" : nameOf(r.requesterId), "Worked by": r.outcome === "noshow" ? "Nobody (" + nameOf(r.assignedTo) + " no-show)" : nameOf(r.assignedTo),
         "Status": status, "Cross-train": eligible(S.staff[r.assignedTo], r.position) ? "" : "Yes", "Arranged by employees": r.mode === "arranged" ? "Yes" : "",
         "Approved by": r.decidedBy ? nameOf(r.decidedBy) : "", "Approved": stamp(r.decidedAt), "Excuse": r.excused ? r.excused.reason : "" };
     });
@@ -2200,7 +2235,7 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
     finally { b.disabled = false; b.textContent = "Reset"; }
   });
   // ---- test data: ~6 months of history, 30 current + 8 former employees ----
-  const SEED_V = 5;
+  const SEED_V = 6;
   function rng(seed) { return () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
   async function pool(items, worker, label) {
     let i = 0, done = 0; const N = items.length;
@@ -2343,6 +2378,23 @@ main.app.chatting{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,
         allReqs.push(r);
         put("requests", r.id, r);
       }
+    }
+    // a few manager-posted extra shifts: some already filled, three still open with offers
+    for (const d of [-40, -26, -12, -5, 2, 4, 6]) {
+      const ds = dayOff(d), mgr = pick(mgrs), position = pick(["Budtender", "Budtender", "Inventory", "Reception"]);
+      const ty = d % 2 ? "close" : "morning", createdAt = Math.round(Math.min(at(ds, PRESET[ty].start) - (2 + R() * 5) * DAY, now - 0.2 * DAY));
+      const r = { id: "rq_" + String(++rn).padStart(4, "0"), kind: "extra", requesterId: mgr.id, position, date: ds, start: PRESET[ty].start, end: PRESET[ty].end, shiftType: ty,
+        note: pick(["Holiday rush", "Truck day, extra hands", "Event weekend", ""]), mode: "open", arrangedWith: null, status: "open", assignedTo: null, decidedBy: null, createdAt, updatedAt: createdAt };
+      logA(createdAt, "requested", r, mgr.name + " posted an extra " + position + " shift to open shifts", mgr.id);
+      const pool2 = ppl.filter(q => onAt(q, d) && q.role !== "management"), fits = pool2.filter(q => trained(q, position));
+      const vols = []; for (let k = 0; k < 2 + Math.floor(R() * 3); k++) { const v = weighted(fits.length ? fits : pool2); if (!vols.includes(v)) vols.push(v); }
+      vols.forEach(v => { const ts = Math.round(Math.min(now - 60e3, createdAt + v.speed * 3600e3)); put("volunteers", r.id + "__" + v.id, { reqId: r.id, staffId: v.id, ts, trained: trained(v, position) }); logA(ts, "offered", r, v.name + " offered to take the extra shift", v.id); });
+      if (d < 0) {
+        const cov = vols[0];
+        Object.assign(r, { status: "approved", assignedTo: cov.id, decidedBy: mgr.id, decidedAt: createdAt + Math.round(DAY), outcome: "worked", outcomeBy: mgr.id, outcomeAt: at(ds, r.end) + 3600e3 });
+        r.updatedAt = r.decidedAt; logA(r.decidedAt, "approved", r, mgr.name + " approved " + cov.name + " for the extra shift", mgr.id);
+      }
+      allReqs.push(r); put("requests", r.id, r);
     }
     // leave the 3 most recent covered shifts unconfirmed so "Did they work it?" has something to check
     allReqs.filter(r => r.status === "approved" && r.outcome && endOf(r).getTime() < now).sort((a, b) => startOf(b) - startOf(a)).slice(0, 3)
